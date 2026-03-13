@@ -27,6 +27,8 @@
          add_route/2,
          set_priority_routes/1,
          set_priority_routes/2,
+         clear_priority_routes/0,
+         clear_priority_routes/1,
          remove_route/1,
          remove_route/2,
          remove_resource/1,
@@ -88,16 +90,28 @@ add_route(Name, Route) ->
     gen_server:call(?SERVER, {add_route, Name, Route}, infinity).
 
 -spec set_priority_routes(list(pathmatchterm())) -> ok.
--spec set_priority_routes(atom(), list(pathmatchterm())) -> ok.
+-spec set_priority_routes(term(), list(pathmatchterm())) -> ok.
 set_priority_routes(Routes) ->
     set_priority_routes(default, Routes).
 
 set_priority_routes(Name, Routes) ->
     gen_server:call(?SERVER, {set_priority_routes, Name, Routes}, infinity).
 
+-spec clear_priority_routes() -> ok.
+-spec clear_priority_routes(term()) -> ok.
+clear_priority_routes() ->
+    clear_priority_routes(default).
+
+clear_priority_routes(Name) ->
+    gen_server:call(?SERVER, {clear_priority_routes, Name}, infinity).
+
 -spec remove_route(hostmatchterm() | pathmatchterm()) -> ok.
-%% @doc Removes a route from webamchine's route table. The route
-%%      route must be properly formatted
+%% @doc 
+%% Removes a route from webamchine's route table. The route must be properly
+%% formatted.  If the route is in the priority routes, the route will still be
+%% active unless the priority routes are cleared (and potentially reset without
+%% the route)
+%%  
 %% @see add_route/2
 remove_route(Route) ->
     remove_route(default, Route).
@@ -123,7 +137,7 @@ get_routes(Name) ->
     get_dispatch_list(Name).
 
 -spec get_priority_routes() -> list(pathmatchterm()).
--spec get_priority_routes(atom()) -> list(pathmatchterm()).
+-spec get_priority_routes(term()) -> list(pathmatchterm()).
 get_priority_routes() ->
     get_priority_routes(default).
 
@@ -180,6 +194,10 @@ handle_call({set_priority_routes, Name, Routes}, _From, State) ->
         {?MODULE, priority_routes, Name},
         Routes
     ),
+    {reply, ok, State};
+
+handle_call({clear_priority_routes, Name}, _From, State) ->
+    persistent_term:erase({?MODULE, priority_routes, Name}),
     {reply, ok, State};
 
 handle_call({init_routes, Name, DefaultRoutes}, _From, State) ->
