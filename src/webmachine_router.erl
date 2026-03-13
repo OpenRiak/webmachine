@@ -25,12 +25,18 @@
 -export([start_link/0,
          add_route/1,
          add_route/2,
+         set_priority_routes/1,
+         set_priority_routes/2,
+         clear_priority_routes/0,
+         clear_priority_routes/1,
          remove_route/1,
          remove_route/2,
          remove_resource/1,
          remove_resource/2,
          get_routes/0,
          get_routes/1,
+         get_priority_routes/0,
+         get_priority_routes/1,
          init_routes/1,
          init_routes/2
         ]).
@@ -43,34 +49,37 @@
          terminate/2,
          code_change/3]).
 
-%% @type hostmatchterm() = {hostmatch(), [pathmatchterm()]}.
+-type hostmatchterm() :: {hostmatch(), [pathmatchterm()]}.
 % The dispatch configuration contains a list of these terms, and the
 % first one whose host and one pathmatchterm match is used.
 
-%% @type pathmatchterm() = {[pathterm()], matchmod(), matchopts()}.
+-type hostmatch() :: any().
+% This was never originally defined in webmachine specs.
+
+-type pathmatchterm() :: {[pathterm()], matchmod(), matchopts()}.
 % The dispatch configuration contains a list of these terms, and the
 % first one whose list of pathterms matches the input path is used.
 
-%% @type pathterm() = '*' | string() | atom().
+-type pathterm() :: '*' | string() | atom().
 % A list of pathterms is matched against a '/'-separated input path.
 % The '*' pathterm matches all remaining tokens.
 % A string pathterm will match a token of exactly the same string.
 % Any atom pathterm other than '*' will match any token and will
 % create a binding in the result if a complete match occurs.
 
-%% @type matchmod() = atom().
+-type matchmod() :: atom().
 % This atom, if present in a successful matchterm, will appear in
 % the resulting dispterm.  In Webmachine this is used to name the
 % resource module that will handle the matching request.
 
-%% @type matchopts() = [term()].
+-type matchopts() :: [term()].
 % This term, if present in a successful matchterm, will appear in
 % the resulting dispterm.  In Webmachine this is used to provide
 % arguments to the resource module handling the matching request.
 
 -define(SERVER, ?MODULE).
 
-%% @spec add_route(hostmatchterm() | pathmatchterm()) -> ok
+-spec add_route(hostmatchterm() | pathmatchterm()) -> ok.
 %% @doc Adds a route to webmachine's route table. The route should
 %%      be the format documented here:
 %% http://bitbucket.org/justin/webmachine/wiki/DispatchConfiguration
@@ -80,9 +89,29 @@ add_route(Route) ->
 add_route(Name, Route) ->
     gen_server:call(?SERVER, {add_route, Name, Route}, infinity).
 
-%% @spec remove_route(hostmatchterm() | pathmatchterm()) -> ok
-%% @doc Removes a route from webamchine's route table. The route
-%%      route must be properly formatted
+-spec set_priority_routes(list(pathmatchterm())) -> ok.
+-spec set_priority_routes(term(), list(pathmatchterm())) -> ok.
+set_priority_routes(Routes) ->
+    set_priority_routes(default, Routes).
+
+set_priority_routes(Name, Routes) ->
+    gen_server:call(?SERVER, {set_priority_routes, Name, Routes}, infinity).
+
+-spec clear_priority_routes() -> ok.
+-spec clear_priority_routes(term()) -> ok.
+clear_priority_routes() ->
+    clear_priority_routes(default).
+
+clear_priority_routes(Name) ->
+    gen_server:call(?SERVER, {clear_priority_routes, Name}, infinity).
+
+-spec remove_route(hostmatchterm() | pathmatchterm()) -> ok.
+%% @doc 
+%% Removes a route from webamchine's route table. The route must be properly
+%% formatted.  If the route is in the priority routes, the route will still be
+%% active unless the priority routes are cleared (and potentially reset without
+%% the route)
+%%  
 %% @see add_route/2
 remove_route(Route) ->
     remove_route(default, Route).
@@ -90,7 +119,7 @@ remove_route(Route) ->
 remove_route(Name, Route) ->
     gen_server:call(?SERVER, {remove_route, Name, Route}, infinity).
 
-%% @spec remove_resource(atom()) -> ok
+-spec remove_resource(atom()) -> ok.
 %% @doc Removes all routes for a specific resource module.
 remove_resource(Resource) when is_atom(Resource) ->
     remove_resource(default, Resource).
@@ -98,7 +127,7 @@ remove_resource(Resource) when is_atom(Resource) ->
 remove_resource(Name, Resource) when is_atom(Resource) ->
     gen_server:call(?SERVER, {remove_resource, Name, Resource}, infinity).
 
-%% @spec get_routes() -> [{[], res, []}]
+-spec get_routes() -> [{[], res, []}].
 %% @doc Retrieve a list of routes and resources set in webmachine's
 %%      route table.
 get_routes() ->
@@ -107,7 +136,15 @@ get_routes() ->
 get_routes(Name) ->
     get_dispatch_list(Name).
 
-%% @spec init_routes([hostmatchterm() | pathmatchterm()]) -> ok
+-spec get_priority_routes() -> list(pathmatchterm()).
+-spec get_priority_routes(term()) -> list(pathmatchterm()).
+get_priority_routes() ->
+    get_priority_routes(default).
+
+get_priority_routes(Name) ->
+    persistent_term:get({?MODULE, priority_routes, Name}, []).
+
+-spec init_routes([hostmatchterm() | pathmatchterm()]) -> ok.
 %% @doc Set the default routes, unless the routing table isn't empty.
 init_routes(DefaultRoutes) ->
     init_routes(default, DefaultRoutes).
@@ -115,7 +152,7 @@ init_routes(DefaultRoutes) ->
 init_routes(Name, DefaultRoutes) ->
     gen_server:call(?SERVER, {init_routes, Name, DefaultRoutes}, infinity).
 
-%% @spec start_link() -> {ok, pid()} | {error, any()}
+-spec start_link() -> {ok, pid()} | {error, any()}.
 %% @doc Starts the webmachine_router gen_server.
 start_link() ->
     %% We expect to only be called from webmachine_sup
@@ -151,6 +188,17 @@ handle_call({add_route, Name, Route}, _From, State) ->
     DL = [Route|[D || D <- get_dispatch_list(Name),
                       D /= Route]],
     {reply, set_dispatch_list(Name, DL), State};
+
+handle_call({set_priority_routes, Name, Routes}, _From, State) ->
+    persistent_term:put(
+        {?MODULE, priority_routes, Name},
+        Routes
+    ),
+    {reply, ok, State};
+
+handle_call({clear_priority_routes, Name}, _From, State) ->
+    persistent_term:erase({?MODULE, priority_routes, Name}),
+    {reply, ok, State};
 
 handle_call({init_routes, Name, DefaultRoutes}, _From, State) ->
     %% if the table lacks a dispatch_list row, set it

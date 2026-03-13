@@ -33,7 +33,7 @@ integration_test_() ->
      end,
      %% Cleanup
      fun(Ctx) ->
-             wm_integration_test_util:stop(Ctx)
+        wm_integration_test_util:stop(Ctx)
      end,
      %% Test functions provided with context from setup
      [fun(Ctx) ->
@@ -44,10 +44,31 @@ integration_test_() ->
     }.
 
 integration_tests() ->
-    [{"test_host_header_localhost", fun test_host_header_localhost/1},
-     {"test_host_header_127", fun test_host_header_127/1},
-     {"test_host_header_ipv6", fun test_host_header_ipv6/1},
-     {"test_host_header_ipv6_curl", fun test_host_header_ipv6_curl/1}].
+    [
+        {"test_host_header_localhost", fun test_host_header_localhost/1},
+        {"test_host_header_127", fun test_host_header_127/1},
+        {"test_host_header_ipv6", fun test_host_header_ipv6/1},
+        {"test_host_header_ipv6_curl", fun test_host_header_ipv6_curl/1},
+        {"test_route_changes", fun test_route_changes/1}
+    ].
+
+test_route_changes(Ctx) ->
+    Route = {["wm_echo_host_header", '*'], wm_echo_host_header, []},
+    URL = url(Ctx, "localhost", "wm_echo_host_header"),
+    {ok, Status1, _Headers1, _Body1} = ibrowse:send_req(URL, [], get, [], []),
+    ?assertEqual("200", Status1),
+    webmachine_router:set_priority_routes([Route]),
+    {ok, Status2, _Headers2, _Body2} = ibrowse:send_req(URL, [], get, [], []),
+    ?assertEqual("200", Status2),
+    webmachine_router:remove_route(Route),
+    {ok, Status3, _Headers3, _Body3} = ibrowse:send_req(URL, [], get, [], []),
+    ?assertEqual("200", Status3),
+    webmachine_router:clear_priority_routes(),
+    {ok, Status4, _Headers4, _Body4} = ibrowse:send_req(URL, [], get, [], []),
+    ?assertEqual("404", Status4),
+    webmachine_router:add_route(Route),
+    {ok, Status5, _Headers5, _Body5} = ibrowse:send_req(URL, [], get, [], []),
+    ?assertEqual("200", Status5).
 
 test_host_header_localhost(Ctx) ->
     ExpectHost = add_port(Ctx, "localhost"),
